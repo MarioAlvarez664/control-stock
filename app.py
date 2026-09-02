@@ -6,7 +6,7 @@ import io
 
 st.set_page_config(page_title="Control de Stock", page_icon="📦", layout="centered")
 
-# 1. Configuración de los sectores
+# 1. Configuración completa de los sectores y sus datos de ventas
 CONFIG = {
     "Picatoste": {
         "archivo": "stock.xlsx",
@@ -44,6 +44,20 @@ CONFIG = {
             "A+P": 11.39,
             "Casero": 7.80,
             "Crujiente": 2.91
+        },
+        "ventas_anuales": {
+            "Box": 0,
+            "Cajas": 0,
+            "A+P": 5668776,
+            "Casero": 3933539,
+            "Crujiente": 1591784
+        },
+        "factores_bolsas": {
+            "Box": 1,
+            "Cajas": 1,
+            "A+P": 1728,
+            "Casero": 1872,
+            "Crujiente": 1728
         }
     }
 }
@@ -71,13 +85,8 @@ sector = st.sidebar.selectbox("Elige la línea:", ["Picatoste", "Pan Rayado"])
 
 st.sidebar.markdown("---")
 
-# 3. Opciones de menú según el sector
-if sector == "Picatoste":
-    menu_opciones = ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Objetivos Mensuales", "Resumen Global"]
-else:
-    menu_opciones = ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Resumen Global"]
-
-menu = st.sidebar.radio("Navegación", menu_opciones)
+# 3. Menú de navegación común para ambos sectores
+menu = st.sidebar.radio("Navegación", ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Objetivos Mensuales", "Resumen Global"])
 
 # Si NO estamos en Resumen Global, operamos sobre el sector activo
 if menu != "Resumen Global":
@@ -233,8 +242,12 @@ if menu != "Resumen Global":
             )
 
     elif menu == "Objetivos Mensuales":
-        st.subheader("🎯 Objetivos Mensuales - Picatoste")
-        st.write("Control de cumplimiento de la proyección mensual (Ventas Anuales + 5% / 12) frente a lo vendido (Pedidos) en el mes en curso.")
+        st.subheader(f"🎯 Objetivos Mensuales - {sector}")
+        st.write(f"Control de cumplimiento de la proyección mensual (Ventas Anuales + 5% / 12) frente a lo vendido (Pedidos) en el mes en curso para **{sector}**.")
+        
+        ventas_anuales = CONFIG[sector].get("ventas_anuales", {})
+        factores = CONFIG[sector].get("factores_bolsas", {})
+        productos = CONFIG[sector]["productos"]
         
         # Calcular palets vendidos en el mes actual a partir del historial
         if not historial.empty and "Fecha" in historial.columns:
@@ -249,16 +262,20 @@ if menu != "Resumen Global":
         else:
             sold_palets = {}
             
-        ventas_anuales = CONFIG["Picatoste"]["ventas_anuales"]
-        factores = CONFIG["Picatoste"]["factores_bolsas"]
-        productos = CONFIG["Picatoste"]["productos"]
-        
         objetivos_data = []
         for prod in productos:
-            v_anual = ventas_anuales[prod]
+            v_anual = ventas_anuales.get(prod, 0)
+            
+            # Si el producto no tiene ventas anuales configuradas (como Box o Cajas)
+            if v_anual == 0:
+                st.markdown(f"### 📦 {prod}")
+                st.info("ℹ️ Sin objetivos de ventas anuales configurados para este producto.")
+                st.markdown("---")
+                continue
+                
             v_anual_5 = v_anual * 1.05
             proj_mensual_bags = v_anual_5 / 12
-            factor = factores[prod]
+            factor = factores.get(prod, 1)
             proj_mensual_palets = proj_mensual_bags / factor
             
             palets_vendidos = sold_palets.get(prod, 0)
@@ -285,9 +302,10 @@ if menu != "Resumen Global":
             st.progress(progress_val)
             st.markdown("---")
             
-        df_obj = pd.DataFrame(objetivos_data)
-        st.subheader("📋 Tabla Resumen de Objetivos")
-        st.dataframe(df_obj, use_container_width=True, hide_index=True)
+        if objetivos_data:
+            df_obj = pd.DataFrame(objetivos_data)
+            st.subheader("📋 Tabla Resumen de Objetivos")
+            st.dataframe(df_obj, use_container_width=True, hide_index=True)
 
 # Vista de Resumen Global (Ambos sectores juntos)
 else:
