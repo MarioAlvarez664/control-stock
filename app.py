@@ -6,6 +6,16 @@ import os
 st.set_page_config(page_title="Control de Stock", page_icon="📦", layout="centered")
 
 PRODUCTOS = ["Frito", "Ajo", "Tostado", "Azeite", "Alho/Salsa"]
+
+# Demanda media diaria por producto (en palets/día)
+DEMANDA_DIARIA = {
+    "Frito": 3.98,
+    "Ajo": 3.22,
+    "Tostado": 3.94,
+    "Azeite": 0.23,
+    "Alho/Salsa": 0.4
+}
+
 ARCHIVO = "stock.xlsx"
 
 # 1. Inicialización del archivo si no existe
@@ -25,7 +35,7 @@ if not os.path.exists(ARCHIVO):
 stock = pd.read_excel(ARCHIVO, sheet_name="Stock")
 historial = pd.read_excel(ARCHIVO, sheet_name="Historial")
 
-# PARCHE: Si el Excel antiguo no tiene la columna de "Última Actualización", se la añadimos
+# Parche de compatibilidad por si la columna no existe en el Excel previo
 if "Última Actualización" not in stock.columns:
     stock["Última Actualización"] = "Sin registros"
 
@@ -34,20 +44,31 @@ st.title("📦 Control de Stock")
 menu = st.sidebar.radio("Navegación", ["Ver Stock", "Actualizar Stock (Masivo)", "Historial"])
 
 if menu == "Ver Stock":
-    st.subheader("Stock Actual")
+    st.subheader("Stock Actual y Días de Cobertura")
     
     cols = st.columns(3)
     for i, fila in stock.iterrows():
+        prod = fila["Producto"]
         valor = fila["Stock"]
         ultima_fecha = fila["Última Actualización"]
         
-        # 2. Formato del texto de la tarjeta, incluyendo la fecha
-        texto_tarjeta = f"**{fila['Producto']}**\n\n📦 {valor} palets\n\n🕒 *{ultima_fecha}*"
+        # 2. Cálculo de días de stock restantes
+        demanda = DEMANDA_DIARIA.get(prod, 0)
+        dias_restantes = round(valor / demanda, 1) if demanda > 0 else 0
+        
+        # Formato de la tarjeta visual
+        texto_tarjeta = (
+            f"**{prod}**\n\n"
+            f"📦 **{valor}** palets\n\n"
+            f"⏳ **{dias_restantes} días** de stock\n\n"
+            f"🕒 *{ultima_fecha}*"
+        )
         
         with cols[i % 3]:
-            if valor < 5:
+            # 3. Alertas basadas en días de stock restantes (no en palets brutos)
+            if dias_restantes < 3:
                 st.error(texto_tarjeta)
-            elif valor <= 10:
+            elif dias_restantes <= 7:
                 st.warning(texto_tarjeta)
             else:
                 st.success(texto_tarjeta)
@@ -56,7 +77,6 @@ elif menu == "Actualizar Stock (Masivo)":
     st.subheader("Registrar Movimientos")
     st.write("Escribe las cantidades a **añadir** (Producción) o **quitar** (Pedido) en la tabla:")
     
-    # 3. Preparamos una tabla temporal para que el usuario edite
     df_input = pd.DataFrame({
         "Producto": stock["Producto"],
         "Stock Actual": stock["Stock"],
@@ -64,12 +84,11 @@ elif menu == "Actualizar Stock (Masivo)":
         "➖ Quitar": [0] * len(stock)
     })
     
-    # 4. Tabla editable
     editado = st.data_editor(
         df_input,
         hide_index=True,
         use_container_width=True,
-        disabled=["Producto", "Stock Actual"], # Bloqueamos para que no puedan cambiar nombres ni el stock base
+        disabled=["Producto", "Stock Actual"],
         column_config={
             "➕ Añadir": st.column_config.NumberColumn(min_value=0, step=1),
             "➖ Quitar": st.column_config.NumberColumn(min_value=0, step=1)
@@ -89,17 +108,15 @@ elif menu == "Actualizar Stock (Masivo)":
             sub_qty = row["➖ Quitar"]
             stock_actual = stock.loc[index, "Stock"]
             
-            # Evitar números negativos en el stock
+            # Validación de stock suficiente
             if sub_qty > (stock_actual + add_qty):
                 st.error(f"⚠️ No puedes quitar {sub_qty} palets de {prod}. Solo hay {stock_actual}.")
                 errores = True
                 continue
             
-            # Si el usuario puso algún número en Añadir o Quitar
             if add_qty > 0 or sub_qty > 0:
                 cambios_realizados = True
                 
-                # Actualizamos stock y la fecha de última actualización
                 stock.loc[index, "Stock"] = stock_actual + add_qty - sub_qty
                 stock.loc[index, "Última Actualización"] = ahora_str
                 
@@ -108,7 +125,6 @@ elif menu == "Actualizar Stock (Masivo)":
                 if sub_qty > 0:
                     nuevos_movimientos.append({"Fecha": ahora_dt, "Tipo": "Pedido", "Producto": prod, "Cantidad": sub_qty})
         
-        # 5. Guardado global
         if cambios_realizados and not errores:
             df_nuevos = pd.DataFrame(nuevos_movimientos)
             historial = pd.concat([historial, df_nuevos], ignore_index=True)
@@ -118,7 +134,7 @@ elif menu == "Actualizar Stock (Masivo)":
                 historial.to_excel(writer, sheet_name="Historial", index=False)
             
             st.success("✅ Cambios guardados correctamente.")
-            st.rerun() # Recarga la página para poner la tabla a 0 de nuevo
+            st.rerun()
 
 elif menu == "Historial":
     st.subheader("Historial de Movimientos")
