@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import io
 
@@ -34,13 +34,32 @@ CONFIG = {
     }
 }
 
-# 2. Selector de sector en la barra lateral (para las vistas operativas)
+# Función para calcular la fecha de fin de stock excluyendo los domingos
+def calcular_fecha_agotamiento(stock_val, demanda):
+    if demanda <= 0:
+        return "Indefinido"
+    if stock_val <= 0:
+        return "Agotado"
+    
+    current_date = datetime.now()
+    stock_restante = float(stock_val)
+    
+    # Simulamos día a día hasta agotar el stock
+    while stock_restante > 0:
+        current_date += timedelta(days=1)
+        # Si NO es domingo (0=Lunes ... 5=Sábado, 6=Domingo)
+        if current_date.weekday() != 6:
+            stock_restante -= demanda
+            
+    return current_date.strftime('%d-%m-%Y')
+
+# 2. Selector de sector en la barra lateral
 st.sidebar.title("🏢 Sector Activo")
 sector = st.sidebar.selectbox("Elige la línea:", ["Picatoste", "Pan Rayado"])
 
 st.sidebar.markdown("---")
 
-# 3. Menú de navegación (se añade "Resumen Global")
+# 3. Menú de navegación
 menu = st.sidebar.radio("Navegación", ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Resumen Global"])
 
 # Si NO estamos en Resumen Global, operamos sobre el sector activo seleccionado
@@ -75,7 +94,7 @@ if menu != "Resumen Global":
     st.title(f"📦 Control de Stock - {sector}")
 
     if menu == "Ver Stock":
-        st.subheader("Stock Actual y Días Restantes")
+        st.subheader("Stock Actual, Días y Fecha Límite (Sin contar domingos)")
         
         cols = st.columns(3)
         for i, fila in stock.iterrows():
@@ -87,7 +106,9 @@ if menu != "Resumen Global":
             
             if demanda > 0:
                 dias_restantes = valor / demanda
-                texto_dias = f"⏳ **{dias_restantes:.1f} días** de stock"
+                fecha_fin = calcular_fecha_agotamiento(valor, demanda)
+                texto_dias = f"⏳ **{dias_restantes:.1f} días**\n📅 *Hasta el {fecha_fin}*"
+                
                 if dias_restantes < 3:
                     estado = "error"
                 elif dias_restantes <= 7:
@@ -105,7 +126,7 @@ if menu != "Resumen Global":
                 f"**{prod}**\n\n"
                 f"📦 **{valor}** palets\n\n"
                 f"{texto_dias}\n\n"
-                f"🕒 *{ultima_fecha}*"
+                f"🕒 *Act: {ultima_fecha}*"
             )
             
             with cols[i % 3]:
@@ -197,7 +218,7 @@ if menu != "Resumen Global":
 # Vista de Resumen Global (Ambos sectores juntos)
 else:
     st.title("🌐 Resumen Global (Picatoste y Pan Rayado)")
-    st.write("Vista consolidada con el stock actual, la demanda diaria y los días de cobertura estimados para **todas las líneas de producción juntas**.")
+    st.write("Vista consolidada con el stock actual, demanda diaria, días restantes y **fecha estimada de fin de stock (excluyendo domingos)**.")
     
     consolidated_rows = []
     for sec, cfg in CONFIG.items():
@@ -220,9 +241,11 @@ else:
             
             if demanda > 0:
                 dias_val = round(stock_val / demanda, 1)
+                fecha_fin = calcular_fecha_agotamiento(stock_val, demanda)
                 demanda_str = f"{demanda} palets/día"
             else:
                 dias_val = "N/A"
+                fecha_fin = "Indefinido"
                 demanda_str = "Sin consumo diario"
             
             consolidated_rows.append({
@@ -230,16 +253,16 @@ else:
                 "Producto": prod,
                 "Stock Actual (Palets)": stock_val,
                 "Demanda Diaria": demanda_str,
-                "Días de Stock Restantes": dias_val,
+                "Días de Stock": dias_val,
+                "Fecha Fin de Stock (Sin Domingos)": fecha_fin,
                 "Última Actualización": ultima
             })
     
     df_global = pd.DataFrame(consolidated_rows)
     
-    # Muestra la tabla unificada en la interfaz
     st.dataframe(df_global, use_container_width=True, hide_index=True)
     
-    # Generación del archivo Excel en memoria para la descarga global
+    # Generación del archivo Excel en memoria
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_global.to_excel(writer, sheet_name="Resumen Global", index=False)
