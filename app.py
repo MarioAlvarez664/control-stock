@@ -6,7 +6,7 @@ import io
 
 st.set_page_config(page_title="Control de Stock", page_icon="📦", layout="centered")
 
-# 1. Configuración de los dos sectores
+# 1. Configuración de los sectores
 CONFIG = {
     "Picatoste": {
         "archivo": "stock.xlsx",
@@ -18,6 +18,20 @@ CONFIG = {
             "Tostado": 3.94,
             "Azeite": 0.23,
             "Alho/Salsa": 0.40
+        },
+        "ventas_anuales": {
+            "Frito": 3679261,
+            "Ajo": 2702671,
+            "Tostado": 2769737,
+            "Azeite": 175712,
+            "Alho/Salsa": 276146
+        },
+        "factores_bolsas": {
+            "Frito": 2880,
+            "Ajo": 2880,
+            "Tostado": 2400,
+            "Azeite": 2304,
+            "Alho/Salsa": 2304
         }
     },
     "Pan Rayado": {
@@ -44,11 +58,9 @@ def calcular_fecha_agotamiento(stock_val, demanda):
     current_date = datetime.now()
     stock_restante = float(stock_val)
     
-    # Simulamos día a día hasta agotar el stock
     while stock_restante > 0:
         current_date += timedelta(days=1)
-        # Si NO es domingo (0=Lunes ... 5=Sábado, 6=Domingo)
-        if current_date.weekday() != 6:
+        if current_date.weekday() != 6:  # Excluir domingos
             stock_restante -= demanda
             
     return current_date.strftime('%d-%m-%Y')
@@ -59,10 +71,15 @@ sector = st.sidebar.selectbox("Elige la línea:", ["Picatoste", "Pan Rayado"])
 
 st.sidebar.markdown("---")
 
-# 3. Menú de navegación
-menu = st.sidebar.radio("Navegación", ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Resumen Global"])
+# 3. Opciones de menú según el sector
+if sector == "Picatoste":
+    menu_opciones = ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Objetivos Mensuales", "Resumen Global"]
+else:
+    menu_opciones = ["Ver Stock", "Actualizar Stock (Masivo)", "Historial", "Resumen Global"]
 
-# Si NO estamos en Resumen Global, operamos sobre el sector activo seleccionado
+menu = st.sidebar.radio("Navegación", menu_opciones)
+
+# Si NO estamos en Resumen Global, operamos sobre el sector activo
 if menu != "Resumen Global":
     datos_sector = CONFIG[sector]
     ARCHIVO = datos_sector["archivo"]
@@ -215,10 +232,67 @@ if menu != "Resumen Global":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+    elif menu == "Objetivos Mensuales":
+        st.subheader("🎯 Objetivos Mensuales - Picatoste")
+        st.write("Control de cumplimiento de la proyección mensual (Ventas Anuales + 5% / 12) frente a lo vendido (Pedidos) en el mes en curso.")
+        
+        # Calcular palets vendidos en el mes actual a partir del historial
+        if not historial.empty and "Fecha" in historial.columns:
+            historial['Fecha_dt'] = pd.to_datetime(historial['Fecha'], errors='coerce')
+            now = datetime.now()
+            current_month_hist = historial[
+                (historial['Fecha_dt'].dt.month == now.month) & 
+                (historial['Fecha_dt'].dt.year == now.year) & 
+                (historial['Tipo'] == 'Pedido')
+            ]
+            sold_palets = current_month_hist.groupby('Producto')['Cantidad'].sum().to_dict()
+        else:
+            sold_palets = {}
+            
+        ventas_anuales = CONFIG["Picatoste"]["ventas_anuales"]
+        factores = CONFIG["Picatoste"]["factores_bolsas"]
+        productos = CONFIG["Picatoste"]["productos"]
+        
+        objetivos_data = []
+        for prod in productos:
+            v_anual = ventas_anuales[prod]
+            v_anual_5 = v_anual * 1.05
+            proj_mensual_bags = v_anual_5 / 12
+            factor = factores[prod]
+            proj_mensual_palets = proj_mensual_bags / factor
+            
+            palets_vendidos = sold_palets.get(prod, 0)
+            bags_vendidas = palets_vendidos * factor
+            
+            pct = (bags_vendidas / proj_mensual_bags) * 100 if proj_mensual_bags > 0 else 0
+            
+            objetivos_data.append({
+                "Producto": prod,
+                "Proyección Mensual (Bolsas)": round(proj_mensual_bags, 1),
+                "Proyección Mensual (Palets)": round(proj_mensual_palets, 1),
+                "Vendido este Mes (Bolsas)": round(bags_vendidas, 1),
+                "Vendido este Mes (Palets)": palets_vendidos,
+                "% Completado": round(pct, 1)
+            })
+            
+            st.markdown(f"### 📦 {prod}")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("Proyección Mensual", f"{proj_mensual_bags:,.0f} bolsas", f"{proj_mensual_palets:.1f} palets")
+            col_m2.metric("Vendido este Mes", f"{bags_vendidas:,.0f} bolsas", f"{palets_vendidos} palets")
+            col_m3.metric("% Completado", f"{pct:.1f}%")
+            
+            progress_val = min(pct / 100.0, 1.0)
+            st.progress(progress_val)
+            st.markdown("---")
+            
+        df_obj = pd.DataFrame(objetivos_data)
+        st.subheader("📋 Tabla Resumen de Objetivos")
+        st.dataframe(df_obj, use_container_width=True, hide_index=True)
+
 # Vista de Resumen Global (Ambos sectores juntos)
 else:
     st.title("🌐 Resumen Global (Picatoste y Pan Rayado)")
-    st.write("Vista consolidada con el stock actual, demanda diaria, días restantes y **fecha estimada de fin de stock (excluyendo domingos)**.")
+    st.write("Vista consolidada con el stock actual, demanda diaria, días restantes y fecha estimada de fin de stock (excluyendo domingos).")
     
     consolidated_rows = []
     for sec, cfg in CONFIG.items():
@@ -262,7 +336,7 @@ else:
     
     st.dataframe(df_global, use_container_width=True, hide_index=True)
     
-    # Generación del archivo Excel en memoria
+    # Generación del archivo Excel en memoria para descarga global
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_global.to_excel(writer, sheet_name="Resumen Global", index=False)
